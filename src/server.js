@@ -14,7 +14,7 @@ const __dirname = path.dirname(__filename);
 
 const PORT = 4873
 const HOST = "0.0.0.0"
-const BASE_URL = `http://192.168.1.129:4873`;
+const BASE_URL = `https://registry.voidium.uk`
 const METADATA_TTL_MS = Number(process.env.METADATA_TTL_MS ?? 7 * 24 * 60 * 60 * 1000); // 7 days default
 const KEEP_VERSIONS = Number(process.env.KEEP_VERSIONS ?? 10000); // effectively keep all versions
 const CACHE_LIMIT_GB = Number(process.env.CACHE_LIMIT_GB ?? 90);
