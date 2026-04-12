@@ -91,8 +91,10 @@ export async function handleNpmMetadata(req, res, packageName, store, logger, BA
     res.end(JSON.stringify(metadata, null, 2));
   } catch (error) {
     logger.error("request_failed", { ecosystem: "npm", packageName, kind: "metadata", error: error.message });
-    res.writeHead(502);
-    res.end(`npm proxy error: ${error.message}\n`);
+    if (!res.headersSent && !res.writableEnded) {
+      res.writeHead(502);
+      res.end(`npm proxy error: ${error.message}\n`);
+    }
   }
 }
 
@@ -224,7 +226,7 @@ export async function handleNpmTarball(req, res, packageName, tarballFileName, s
           logger.info("cached", { ecosystem: "npm", packageName, version, file: tarballFileName, size: saved.size });
           logger.info("serve", { ecosystem: "npm", packageName, version, file: tarballFileName, kind: "tarball", source: "cache", cached: true });
         } catch (err) {
-          logger.warn("cache_finalize_failed", { ecosystem: "npm", packageName, error: error.message });
+          logger.warn("cache_finalize_failed", { ecosystem: "npm", packageName, error: err.message });
           await fs.rm(tempPath, { force: true }).catch(() => {});
         }
       } else {
@@ -233,7 +235,7 @@ export async function handleNpmTarball(req, res, packageName, tarballFileName, s
       
     } catch (error) {
       logger.error("request_failed", { ecosystem: "npm", packageName, kind: "tarball", error: error.message });
-      if (!res.headersSent) {
+      if (!res.headersSent && !res.writableEnded) {
         res.writeHead(502);
         res.end(`npm tarball error: ${error.message}\n`);
       }
@@ -241,7 +243,7 @@ export async function handleNpmTarball(req, res, packageName, tarballFileName, s
     
   } catch (error) {
     logger.error("request_failed", { ecosystem: "npm", packageName, kind: "tarball", error: error.message });
-    if (!res.headersSent) {
+    if (!res.headersSent && !res.writableEnded) {
       res.writeHead(502);
       res.end(`npm tarball error: ${error.message}\n`);
     }

@@ -274,8 +274,10 @@ const server = http.createServer(async (req, res) => {
     notFound(res);
   } catch (error) {
     logger.error("request_failed", { error: error.message });
-    res.writeHead(500);
-    res.end(`internal error: ${error.message}\n`);
+    if (!res.headersSent && !res.writableEnded) {
+      res.writeHead(500);
+      res.end(`internal error: ${error.message}\n`);
+    }
   }
 });
 
