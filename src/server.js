@@ -12,9 +12,9 @@ import { handleNpmMetadata, handleNpmTarball, ensureNpmMetadata } from "./npm.js
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT ?? 4873);
-const HOST = process.env.HOST ?? "0.0.0.0";
-const BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
+const PORT = 4873
+const HOST = "0.0.0.0"
+const BASE_URL = `http://192.168.1.129:4873`;
 const METADATA_TTL_MS = Number(process.env.METADATA_TTL_MS ?? 7 * 24 * 60 * 60 * 1000); // 7 days default
 const KEEP_VERSIONS = Number(process.env.KEEP_VERSIONS ?? 10000); // effectively keep all versions
 const CACHE_LIMIT_GB = Number(process.env.CACHE_LIMIT_GB ?? 90);
@@ -22,7 +22,7 @@ const CACHE_LIMIT_BYTES = CACHE_LIMIT_GB * 1024 * 1024 * 1024;
 const UPSTREAM_CONCURRENCY = Number(process.env.UPSTREAM_CONCURRENCY ?? 4);
 const UPSTREAM_TIMEOUT_MS = Number(process.env.UPSTREAM_TIMEOUT_MS ?? 90000);
 const UPSTREAM_RETRIES = Number(process.env.UPSTREAM_RETRIES ?? 3);
-const LOG_LEVEL = process.env.LOG_LEVEL ?? "info";
+const LOG_LEVEL = "info"
 
 const LEVELS = {
   debug: 10,
