@@ -80,12 +80,7 @@ export async function handlePypiDownload(req, res, packageName, filename, query,
       store.markFileAccess("pypi", packageName, resolvedVersion, filename);
       const fileRecord = store.getFileRecord("pypi", packageName, resolvedVersion, filename);
       const headers = { "content-type": fileRecord?.contentType ?? "application/octet-stream" };
-      if (fileRecord?.contentEncoding) {
-        headers["content-encoding"] = fileRecord.contentEncoding;
-      }
-      if (fileRecord?.contentLength) {
-        headers["content-length"] = fileRecord.contentLength;
-      }
+      if (fileRecord?.sizeBytes) headers["content-length"] = String(fileRecord.sizeBytes);
       logger.info("cache_hit", { ecosystem: "pypi", packageName, version: resolvedVersion, file: filename, kind: "file", source: "cache" });
       logger.debug("serve_file", { packageName, version: resolvedVersion, filename, source: "cache" });
       res.writeHead(200, headers);
@@ -104,11 +99,7 @@ export async function handlePypiDownload(req, res, packageName, filename, query,
     await fs.mkdir(tempDir, { recursive: true });
 
     const contentType = response.headers.get("content-type") ?? "application/octet-stream";
-    const contentEncoding = response.headers.get("content-encoding");
-    const contentLength = response.headers.get("content-length");
     const headers = { "content-type": contentType };
-    if (contentEncoding) headers["content-encoding"] = contentEncoding;
-    if (contentLength) headers["content-length"] = contentLength;
     res.writeHead(200, headers);
 
     const [clientBody, diskBody] = response.body.tee();
@@ -132,8 +123,6 @@ export async function handlePypiDownload(req, res, packageName, filename, query,
         sizeBytes: saved.size,
         lastAccessedAt: new Date().toISOString(),
         contentType,
-        contentEncoding,
-        contentLength,
       });
       logger.info("cached", { ecosystem: "pypi", packageName, version: resolvedVersion, file: filename, size: saved.size });
       logger.info("serve", { ecosystem: "pypi", packageName, version: resolvedVersion, file: filename, kind: "file", source: "cache", cached: true });

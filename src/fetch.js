@@ -5,7 +5,7 @@ const DEFAULT_TIMEOUT_MS = Number(process.env.UPSTREAM_TIMEOUT_MS ?? 90000);
 const DEFAULT_RETRIES = Number(process.env.UPSTREAM_RETRIES ?? 3);
 
 function buildHeaders(headers = {}) {
-  return { "user-agent": USER_AGENT, ...headers };
+  return { "user-agent": USER_AGENT, "accept-encoding": "identity", ...headers };
 }
 
 function timeoutFor(value) {

@@ -197,8 +197,7 @@ export async function handleNpmTarball(req, res, packageName, tarballFileName, s
       store.markFileAccess("npm", packageName, version, tarballFileName);
       const fileRecord = store.getFileRecord("npm", packageName, version, tarballFileName);
       const headers = { "content-type": fileRecord?.contentType ?? "application/octet-stream" };
-      if (fileRecord?.contentEncoding) headers["content-encoding"] = fileRecord.contentEncoding;
-      if (fileRecord?.contentLength) headers["content-length"] = fileRecord.contentLength;
+      if (fileRecord?.sizeBytes) headers["content-length"] = String(fileRecord.sizeBytes);
       logger.info("cache_hit", { ecosystem: "npm", packageName, version, file: tarballFileName, kind: "tarball", source: "cache" });
       logger.debug("serve_tarball", { packageName, version, source: "cache" });
       res.writeHead(200, headers);
@@ -226,11 +225,7 @@ export async function handleNpmTarball(req, res, packageName, tarballFileName, s
     await fs.mkdir(tempDir, { recursive: true });
 
     const contentType = response.headers.get("content-type") ?? "application/octet-stream";
-    const contentEncoding = response.headers.get("content-encoding");
-    const contentLength = response.headers.get("content-length");
     const headers = { "content-type": contentType };
-    if (contentEncoding) headers["content-encoding"] = contentEncoding;
-    if (contentLength) headers["content-length"] = contentLength;
     res.writeHead(200, headers);
 
     const [clientBody, diskBody] = response.body.tee();
@@ -253,8 +248,6 @@ export async function handleNpmTarball(req, res, packageName, tarballFileName, s
         sizeBytes: saved.size,
         lastAccessedAt: new Date().toISOString(),
         contentType,
-        contentEncoding,
-        contentLength,
       });
       logger.info("cached", { ecosystem: "npm", packageName, version, file: tarballFileName, size: saved.size });
     } else {
