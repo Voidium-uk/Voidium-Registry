@@ -22,14 +22,14 @@ export async function handlePypiSimple(req, res, packageName, store, logger, BAS
     store.recordRequest("pypi", packageName);
     const htmlFile = store.htmlPath("pypi", packageName);
     if (await isFresh(htmlFile, METADATA_TTL_MS)) {
-      const cachedStream = await store.openHtmlStream("pypi", packageName);
-      if (cachedStream) {
+      const cachedHtml = await store.readHtml("pypi", packageName);
+      if (cachedHtml) {
         logger.info("cache_hit", { ecosystem: "pypi", packageName, kind: "simple_index", source: "cache" });
         logger.debug("serve_simple_index", { packageName, source: "cache" });
         res.writeHead(200, {
           "content-type": "text/html; charset=utf-8",
         });
-        await pipeline(cachedStream, res);
+        res.end(stripPypiHashFragments(cachedHtml));
         return;
       }
     }
@@ -41,7 +41,7 @@ export async function handlePypiSimple(req, res, packageName, store, logger, BAS
     res.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
     });
-    res.end(html);
+    res.end(stripPypiHashFragments(html));
   } catch (error) {
     logger.error("request_failed", { ecosystem: "pypi", packageName, kind: "simple_index", error: error.message });
     if (!res.headersSent && !res.writableEnded) {
@@ -354,11 +354,21 @@ function pypiSimpleUpstream(packageName) {
 function rewritePypiSimpleHtml(html, fileProxyMap) {
   const linkRegex = /<a\s+([^>]*href=")([^"]+)(")([^>]*)>(.*?)<\/a>/gis;
   return html.replace(linkRegex, (match, prefix, href, suffix, rest, label) => {
-    const [hrefBase, fragment = ""] = href.split("#", 2);
+    const [hrefBase] = href.split("#", 2);
     const proxyBase = fileProxyMap.get(href) ?? fileProxyMap.get(hrefBase);
     if (!proxyBase) return match;
-    const proxyUrl = fragment ? `${proxyBase}#${fragment}` : proxyBase;
-    return `<a ${prefix}${escapeHtml(proxyUrl)}${suffix}${rest}>${label}</a>`;
+    // Serve plain download URLs so pip behaves like it would against a normal
+    // index. Upstream hash fragments can make otherwise-valid installs fail.
+    return `<a ${prefix}${escapeHtml(proxyBase)}${suffix}${rest}>${label}</a>`;
+  });
+}
+
+function stripPypiHashFragments(html) {
+  const linkRegex = /<a\s+([^>]*href=")([^"]+)(")([^>]*)>(.*?)<\/a>/gis;
+  return html.replace(linkRegex, (match, prefix, href, suffix, rest, label) => {
+    const [hrefBase] = href.split("#", 2);
+    if (hrefBase === href) return match;
+    return `<a ${prefix}${escapeHtml(hrefBase)}${suffix}${rest}>${label}</a>`;
   });
 }
 

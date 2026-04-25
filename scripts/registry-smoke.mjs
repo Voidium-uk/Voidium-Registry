@@ -202,8 +202,8 @@ async function main() {
         "--index-url",
         `${baseUrl}/pypi/simple/`,
         "--no-deps",
-        "--no-binary=:all:",
-        "six==1.17.0",
+        "--only-binary=:all:",
+        "Pillow>=8.0.0",
       ],
       {
         cwd: pipDir,
