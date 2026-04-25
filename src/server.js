@@ -2,13 +2,9 @@
 import http from "node:http";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { createWriteStream } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Readable, PassThrough } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { Store } from "./store.js";
 import { handleNpmMetadata, handleNpmTarball, ensureNpmMetadata } from "./npm.js";
-import { handlePypiDownload, handlePypiSimple } from "./pip.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,32 +75,6 @@ function parseNpmPath(pathname) {
   return {
     kind: "metadata",
     packageName: normalizePackageName(rest),
-  };
-}
-
-function parsePypiPath(pathname) {
-  const simplePrefixes = ["/pypi/simple/", "/pip/simple/"];
-  for (const prefix of simplePrefixes) {
-    if (!pathname.startsWith(prefix)) continue;
-    const rest = pathname.slice(prefix.length);
-    if (!rest) return null;
-    return {
-      kind: "simple",
-      packageName: normalizePackageName(rest.replace(/\/$/, "")),
-    };
-  }
-
-  if (!pathname.startsWith("/packages/pypi/")) return null;
-  const rest = pathname.slice("/packages/pypi/".length);
-  const parts = rest.split("/");
-  if (parts.length < 2) return null;
-  const packageName = normalizePackageName(parts.shift());
-  const filename = decodeURIComponent(parts.join("/"));
-  if (!packageName || !filename) return null;
-  return {
-    kind: "download",
-    packageName,
-    filename,
   };
 }
 
@@ -241,8 +211,7 @@ const store = new Store(ROOT_DIR, {
 });
 
 const server = http.createServer(async (req, res) => {
-  const urlObj = new URL(req.url, BASE_URL);
-  const pathname = urlObj.pathname;
+  const pathname = new URL(req.url, BASE_URL).pathname;
   const startedAt = Date.now();
 
   logger.debug("request_received", { method: req.method, path: pathname });
@@ -262,7 +231,6 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({
           npm: store.topPackages("npm", 50),
-          pypi: store.topPackages("pypi", 50),
           keepVersions: KEEP_VERSIONS,
           cacheLimitGb: CACHE_LIMIT_GB,
           cacheBytes: store.totalCacheBytes,
@@ -278,7 +246,6 @@ const server = http.createServer(async (req, res) => {
         "package cache proxy",
         "",
         `npm registry: ${BASE_URL}/npm/`,
-        `pip registry: ${BASE_URL}/pypi/simple/`,
         `stats: ${BASE_URL}/admin/stats`,
         "",
       ].join("\n"));
@@ -295,16 +262,6 @@ const server = http.createServer(async (req, res) => {
         "content-length": 2,
       });
       res.end("{}\n");
-      return;
-    }
-
-    const pypiPath = parsePypiPath(pathname);
-    if (pypiPath) {
-      if (pypiPath.kind === "simple") {
-        await handlePypiSimple(req, res, pypiPath.packageName, store, logger, BASE_URL, KEEP_VERSIONS, METADATA_TTL_MS, runUpstream);
-        return;
-      }
-      await handlePypiDownload(req, res, pypiPath.packageName, pypiPath.filename, urlObj.searchParams, store, logger, BASE_URL, KEEP_VERSIONS, METADATA_TTL_MS, runUpstream);
       return;
     }
 

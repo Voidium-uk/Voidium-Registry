@@ -2,7 +2,7 @@
 
 import { once } from "node:events";
 import { spawn, spawnSync } from "node:child_process";
-import { access, mkdtemp, readdir, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -14,7 +14,6 @@ const syntaxFiles = [
   "index.js",
   "src/fetch.js",
   "src/npm.js",
-  "src/pip.js",
   "src/server.js",
   "src/singleflight.js",
   "src/store.js",
@@ -119,10 +118,6 @@ function npmInvocation() {
   };
 }
 
-function pythonCommand() {
-  return process.env.PYTHON ?? "python3";
-}
-
 async function stopProcess(child) {
   if (child.exitCode !== null || child.signalCode !== null) {
     return;
@@ -189,38 +184,6 @@ async function main() {
     );
 
     await access(path.join(npmDir, "node_modules", "is-number", "package.json"));
-
-    const pipDir = await mkdtemp(path.join(registryRoot, "pip-"));
-    await spawnChecked(
-      pythonCommand(),
-      [
-        "-m",
-        "pip",
-        "download",
-        "--dest",
-        pipDir,
-        "--index-url",
-        `${baseUrl}/pypi/simple/`,
-        "--no-deps",
-        "--only-binary=:all:",
-        "Pillow>=8.0.0",
-      ],
-      {
-        cwd: pipDir,
-        env: {
-          ...serverEnv,
-          PIP_DISABLE_PIP_VERSION_CHECK: "1",
-          PIP_INDEX_URL: `${baseUrl}/pypi/simple/`,
-          PIP_NO_CACHE_DIR: "1",
-          PIP_NO_INPUT: "1",
-        },
-      }
-    );
-
-    const pipArtifacts = await readdir(pipDir);
-    if (pipArtifacts.length === 0) {
-      throw new Error("pip smoke did not download any files");
-    }
 
     console.log(`smoke test passed against ${baseUrl}`);
   } finally {

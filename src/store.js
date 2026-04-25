@@ -4,7 +4,6 @@ import path from "node:path";
 
 const DEFAULT_STATE = {
   npm: {},
-  pypi: {},
 };
 
 const DEFAULT_CACHE_LIMIT_BYTES = 90 * 1024 * 1024 * 1024;
@@ -62,15 +61,11 @@ export class Store {
   _mergeState(parsed) {
     const state = structuredClone(DEFAULT_STATE);
     if (parsed && typeof parsed === "object") {
-      for (const [ecosystem, bucket] of Object.entries(parsed)) {
+      for (const ecosystem of Object.keys(DEFAULT_STATE)) {
+        const bucket = parsed[ecosystem];
         if (bucket && typeof bucket === "object") {
           state[ecosystem] = bucket;
         }
-      }
-    }
-    for (const ecosystem of Object.keys(DEFAULT_STATE)) {
-      if (!state[ecosystem] || typeof state[ecosystem] !== "object") {
-        state[ecosystem] = {};
       }
     }
     return state;
@@ -105,10 +100,6 @@ export class Store {
 
   metadataPath(ecosystem, packageName) {
     return path.join(this.packageDir(ecosystem, packageName), "metadata.json");
-  }
-
-  htmlPath(ecosystem, packageName) {
-    return path.join(this.packageDir(ecosystem, packageName), "simple.html");
   }
 
   getPackage(ecosystem, packageName) {
@@ -324,30 +315,14 @@ export class Store {
     return createReadStream(filePath, { encoding: "utf8" });
   }
 
-  async openHtmlStream(ecosystem, packageName) {
-    const filePath = this.htmlPath(ecosystem, packageName);
-    if (!(await exists(filePath))) return null;
-    return createReadStream(filePath, { encoding: "utf8" });
-  }
-
   async readMetadata(ecosystem, packageName) {
     if (!(await exists(this.metadataPath(ecosystem, packageName)))) return null;
     return fs.readFile(this.metadataPath(ecosystem, packageName), "utf8");
   }
 
-  async readHtml(ecosystem, packageName) {
-    if (!(await exists(this.htmlPath(ecosystem, packageName)))) return null;
-    return fs.readFile(this.htmlPath(ecosystem, packageName), "utf8");
-  }
-
   async saveMetadata(ecosystem, packageName, text) {
     await fs.mkdir(this.packageDir(ecosystem, packageName), { recursive: true });
     await fs.writeFile(this.metadataPath(ecosystem, packageName), text, "utf8");
-  }
-
-  async saveHtml(ecosystem, packageName, text) {
-    await fs.mkdir(this.packageDir(ecosystem, packageName), { recursive: true });
-    await fs.writeFile(this.htmlPath(ecosystem, packageName), text, "utf8");
   }
 
   async saveFile(ecosystem, packageName, version, filename, bytes) {
@@ -377,16 +352,6 @@ export class Store {
     return (
       versionEntry.files?.find((file) => file.filename === identifier || file.upstreamUrl === identifier) ?? null
     );
-  }
-
-  getVersionEntryByUpstreamUrl(ecosystem, packageName, upstreamUrl) {
-    const pkg = this.state[ecosystem]?.[packageName];
-    if (!pkg) return null;
-    for (const versionEntry of pkg.versions ?? []) {
-      const file = (versionEntry.files ?? []).find((entry) => entry.upstreamUrl === upstreamUrl);
-      if (file) return { versionEntry, file };
-    }
-    return null;
   }
 
   getVersionEntryByTarballFileName(ecosystem, packageName, filename) {

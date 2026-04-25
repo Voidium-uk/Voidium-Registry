@@ -1,12 +1,11 @@
 # Package Cache Proxy
 
-A small Node.js cache/proxy for reducing repeated npm and PyPI traffic.
+A small Node.js cache/proxy for reducing repeated npm traffic.
 
 ## What it does
 
 - Tracks request frequency per package
 - Caches npm metadata and tarballs
-- Caches PyPI simple indexes and downloaded files for pip
 - Keeps the most recent `10` versions for hot packages on disk
 - Exposes basic stats at `/admin/stats`
 
@@ -28,7 +27,7 @@ By default it listens on `0.0.0.0:4873`.
 npm test
 ```
 
-That runs the syntax checks first and then starts a local registry smoke test that exercises the root page, admin stats, and real `npm` and `pip` client flows against the local proxy.
+That runs the syntax checks first and then starts a local registry smoke test that exercises the root page, admin stats, and a real `npm` client flow against the local proxy.
 
 ## Configure clients
 
@@ -38,14 +37,6 @@ Point npm at the proxy registry:
 
 ```bash
 npm config set registry http://localhost:4873/npm/
-```
-
-### pip
-
-Point pip at the PyPI simple index:
-
-```bash
-pip config set global.index-url http://localhost:4873/pypi/simple/
 ```
 
 ## Environment variables
