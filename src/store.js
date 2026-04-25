@@ -4,6 +4,7 @@ import path from "node:path";
 
 const DEFAULT_STATE = {
   npm: {},
+  pypi: {},
 };
 
 const DEFAULT_CACHE_LIMIT_BYTES = 90 * 1024 * 1024 * 1024;
@@ -61,13 +62,33 @@ export class Store {
   _mergeState(parsed) {
     const state = structuredClone(DEFAULT_STATE);
     if (parsed && typeof parsed === "object") {
-      if (parsed.npm && typeof parsed.npm === "object") state.npm = parsed.npm;
+      for (const [ecosystem, bucket] of Object.entries(parsed)) {
+        if (bucket && typeof bucket === "object") {
+          state[ecosystem] = bucket;
+        }
+      }
+    }
+    for (const ecosystem of Object.keys(DEFAULT_STATE)) {
+      if (!state[ecosystem] || typeof state[ecosystem] !== "object") {
+        state[ecosystem] = {};
+      }
     }
     return state;
   }
 
   _compactState() {
-    // PyPI support has been removed, so there is no secondary ecosystem state to compact.
+    for (const ecosystem of Object.keys(this.state)) {
+      if (!this.state[ecosystem] || typeof this.state[ecosystem] !== "object") {
+        this.state[ecosystem] = {};
+      }
+    }
+  }
+
+  _ensureEcosystem(ecosystem) {
+    if (!this.state[ecosystem] || typeof this.state[ecosystem] !== "object") {
+      this.state[ecosystem] = {};
+    }
+    return this.state[ecosystem];
   }
 
   packageDir(ecosystem, packageName) {
@@ -91,7 +112,7 @@ export class Store {
   }
 
   getPackage(ecosystem, packageName) {
-    const bucket = this.state[ecosystem];
+    const bucket = this._ensureEcosystem(ecosystem);
     if (!bucket[packageName]) {
       bucket[packageName] = {
         requests: 0,
@@ -101,14 +122,42 @@ export class Store {
         cacheBytes: 0,
       };
     }
-    bucket[packageName].cacheBytes ??= 0;
-    return bucket[packageName];
+    const pkg = bucket[packageName];
+    pkg.requests ??= 0;
+    pkg.lastRequestedAt ??= null;
+    pkg.versions ??= [];
+    pkg.hot ??= false;
+    pkg.cacheBytes ??= 0;
+    return pkg;
+  }
+
+  _findFileEntry(versionEntry, fileRecord) {
+    return (versionEntry.files ?? []).find((file) => {
+      if (fileRecord.upstreamUrl && file.upstreamUrl === fileRecord.upstreamUrl) return true;
+      if (fileRecord.filename && file.filename === fileRecord.filename) return true;
+      return false;
+    });
+  }
+
+  _normalizeFileRecord(fileRecord = {}) {
+    return {
+      filename: fileRecord.filename ?? null,
+      upstreamUrl: fileRecord.upstreamUrl ?? null,
+      cached: Boolean(fileRecord.cached),
+      accesses: fileRecord.accesses ?? 0,
+      sizeBytes: fileRecord.sizeBytes ?? 0,
+      lastAccessedAt: fileRecord.lastAccessedAt ?? null,
+      contentType: fileRecord.contentType ?? null,
+      contentEncoding: fileRecord.contentEncoding ?? null,
+      contentLength: fileRecord.contentLength ?? null,
+    };
   }
 
   async rebuildCacheAccounting() {
     this.totalCacheBytes = 0;
     for (const ecosystem of Object.keys(this.state)) {
-      for (const [packageName, pkg] of Object.entries(this.state[ecosystem])) {
+      const bucket = this._ensureEcosystem(ecosystem);
+      for (const [packageName, pkg] of Object.entries(bucket)) {
         pkg.cacheBytes = 0;
         for (const versionEntry of pkg.versions ?? []) {
           versionEntry.files = versionEntry.files ?? [];
@@ -120,23 +169,36 @@ export class Store {
               accesses: 0,
               sizeBytes: 0,
               lastAccessedAt: null,
+              contentType: null,
+              contentEncoding: null,
+              contentLength: null,
             });
           }
+
           for (const file of versionEntry.files) {
             file.accesses ??= 0;
             file.cached ??= false;
             file.sizeBytes ??= 0;
             file.lastAccessedAt ??= null;
+            file.contentType ??= null;
+            file.contentEncoding ??= null;
+            file.contentLength ??= null;
+
             const cachedPath = file.filename
               ? this.cachedFilePath(ecosystem, packageName, versionEntry.version, file.filename)
               : null;
-            if (cachedPath && (await exists(cachedPath))) {
-              const stat = await fs.stat(cachedPath);
+            let stat = null;
+            if (cachedPath) {
+              stat = await fs.stat(cachedPath).catch(() => null);
+            }
+
+            if (stat) {
               file.cached = true;
               file.sizeBytes = stat.size;
               pkg.cacheBytes += stat.size;
               this.totalCacheBytes += stat.size;
-            } else if (!file.cached) {
+            } else {
+              file.cached = false;
               file.sizeBytes = 0;
             }
           }
@@ -158,14 +220,6 @@ export class Store {
     });
     this.scheduleSave();
     return pkg;
-  }
-
-  _findFileEntry(versionEntry, fileRecord) {
-    return (versionEntry.files ?? []).find((file) => {
-      if (fileRecord.upstreamUrl && file.upstreamUrl === fileRecord.upstreamUrl) return true;
-      if (fileRecord.filename && file.filename === fileRecord.filename) return true;
-      return false;
-    });
   }
 
   recordVersion(ecosystem, packageName, version, extra = {}) {
@@ -190,16 +244,18 @@ export class Store {
 
   recordFile(ecosystem, packageName, version, fileRecord) {
     const pkg = this.getPackage(ecosystem, packageName);
-    const versionEntry = pkg.versions.find((entry) => entry.version === version);
+    let versionEntry = pkg.versions.find((entry) => entry.version === version);
     const normalized = this._normalizeFileRecord(fileRecord);
+
     if (!versionEntry) {
-      pkg.versions.unshift({
+      versionEntry = {
         version,
         seenAt: new Date().toISOString(),
         files: [normalized],
-      });
+      };
+      pkg.versions.unshift(versionEntry);
       if (normalized.cached && normalized.sizeBytes) {
-        pkg.cacheBytes = (pkg.cacheBytes ?? 0) + normalized.sizeBytes;
+        pkg.cacheBytes += normalized.sizeBytes;
         this.totalCacheBytes += normalized.sizeBytes;
       }
     } else {
@@ -208,12 +264,15 @@ export class Store {
       if (existing) {
         const oldSize = existing.cached ? existing.sizeBytes ?? 0 : 0;
         Object.assign(existing, {
-          ...existing,
-          ...normalized,
+          filename: normalized.filename ?? existing.filename ?? null,
+          upstreamUrl: normalized.upstreamUrl ?? existing.upstreamUrl ?? null,
           cached: existing.cached || normalized.cached,
           accesses: existing.accesses ?? 0,
           sizeBytes: normalized.sizeBytes ?? existing.sizeBytes ?? 0,
           lastAccessedAt: normalized.lastAccessedAt ?? existing.lastAccessedAt ?? null,
+          contentType: normalized.contentType ?? existing.contentType ?? null,
+          contentEncoding: normalized.contentEncoding ?? existing.contentEncoding ?? null,
+          contentLength: normalized.contentLength ?? existing.contentLength ?? null,
         });
         const newSize = existing.cached ? existing.sizeBytes ?? 0 : 0;
         const delta = newSize - oldSize;
@@ -230,6 +289,7 @@ export class Store {
       }
       versionEntry.seenAt = new Date().toISOString();
     }
+
     this.logger.debug?.("file_recorded", {
       ecosystem,
       packageName,
@@ -244,188 +304,40 @@ export class Store {
     return pkg;
   }
 
-  _normalizeFileRecord(fileRecord = {}) {
-    return {
-      filename: fileRecord.filename ?? null,
-      upstreamUrl: fileRecord.upstreamUrl ?? null,
-      cached: Boolean(fileRecord.cached),
-      accesses: fileRecord.accesses ?? 0,
-      sizeBytes: fileRecord.sizeBytes ?? 0,
-      lastAccessedAt: fileRecord.lastAccessedAt ?? null,
-      contentEncoding: fileRecord.contentEncoding ?? null,
-    };
-  }
-
   markFileAccess(ecosystem, packageName, version, identifier) {
-    const pkg = this.state[ecosystem][packageName];
+    const pkg = this.state[ecosystem]?.[packageName];
     if (!pkg) return;
     const versionEntry = pkg.versions.find((entry) => entry.version === version);
     if (!versionEntry) return;
-    const file = (versionEntry.files ?? []).find((entry) => entry.filename === identifier || entry.upstreamUrl === identifier);
+    const file = (versionEntry.files ?? []).find(
+      (entry) => entry.filename === identifier || entry.upstreamUrl === identifier
+    );
     if (!file) return;
     file.accesses = (file.accesses ?? 0) + 1;
     file.lastAccessedAt = new Date().toISOString();
     this.scheduleSave();
-  }
-
-async isFresh(filePath, maxAgeMs) {
-    try {
-      const stat = await fs.stat(filePath);
-      return Date.now() - stat.mtimeMs < maxAgeMs;
-    } catch {
-      return false;
-    }
   }
 
   async openMetadataStream(ecosystem, packageName) {
     const filePath = this.metadataPath(ecosystem, packageName);
     if (!(await exists(filePath))) return null;
-    return fs.createReadStream(filePath, { encoding: "utf8" });
+    return createReadStream(filePath, { encoding: "utf8" });
   }
 
   async openHtmlStream(ecosystem, packageName) {
     const filePath = this.htmlPath(ecosystem, packageName);
     if (!(await exists(filePath))) return null;
-    return fs.createReadStream(filePath, { encoding: "utf8" });
+    return createReadStream(filePath, { encoding: "utf8" });
   }
 
-  recordVersion(ecosystem, packageName, version, extra = {}) {
-    const pkg = this.getPackage(ecosystem, packageName);
-    const idx = pkg.versions.findIndex((entry) => entry.version === version);
-    const entry = {
-      version,
-      seenAt: new Date().toISOString(),
-      ...extra,
-    };
-    if (idx >= 0) {
-      pkg.versions[idx] = { ...pkg.versions[idx], ...entry };
-      const [moved] = pkg.versions.splice(idx, 1);
-      pkg.versions.unshift(moved);
-    } else {
-      pkg.versions.unshift(entry);
-    }
-    this.scheduleSave();
-    return pkg;
+  async readMetadata(ecosystem, packageName) {
+    if (!(await exists(this.metadataPath(ecosystem, packageName)))) return null;
+    return fs.readFile(this.metadataPath(ecosystem, packageName), "utf8");
   }
 
-  recordFile(ecosystem, packageName, version, fileRecord) {
-    const pkg = this.state[ecosystem][packageName];
-    if (!pkg) return null;
-    const versionEntry = pkg.versions.find((entry) => entry.version === version);
-    if (!versionEntry) return null;
-    const existing = this._findFileEntry(versionEntry, fileRecord);
-    if (!existing) {
-      versionEntry.files = versionEntry.files ?? [];
-      const normalized = this._normalizeFileRecord(fileRecord);
-      versionEntry.files.unshift(normalized);
-      if (normalized.cached && normalized.sizeBytes) {
-        pkg.cacheBytes = (pkg.cacheBytes ?? 0) + normalized.sizeBytes;
-        this.totalCacheBytes += normalized.sizeBytes;
-      }
-      this.scheduleSave();
-      return normalized;
-    }
-    const oldSize = existing.cached ? existing.sizeBytes ?? 0 : 0;
-    Object.assign(existing, {
-      ...existing,
-      ...fileRecord,
-      cached: existing.cached || fileRecord.cached,
-      accesses: existing.accesses ?? 0,
-      sizeBytes: fileRecord.sizeBytes ?? existing.sizeBytes ?? 0,
-      lastAccessedAt: fileRecord.lastAccessedAt ?? existing.lastAccessedAt ?? null,
-    });
-    const newSize = existing.cached ? existing.sizeBytes ?? 0 : 0;
-    const delta = newSize - oldSize;
-    if (delta !== 0) {
-      pkg.cacheBytes = (pkg.cacheBytes ?? 0) + delta;
-      this.totalCacheBytes += delta;
-    }
-    this.scheduleSave();
-    return existing;
-  }
-
-  getFileRecord(ecosystem, packageName, version, filename) {
-    const versionEntry = this.state[ecosystem][packageName]?.versions?.find(entry => entry.version === version);
-    if (!versionEntry) return null;
-    return versionEntry.files?.find(file => file.filename === filename) ?? null;
-  }
-
-  getFileRecord(ecosystem, packageName, version, filename) {
-    const versionEntry = this.state[ecosystem][packageName]?.versions?.find(entry => entry.version === version);
-    if (!versionEntry) return null;
-    return versionEntry.files?.find(file => file.filename === filename) ?? null;
-  }
-
-  markFileAccess(ecosystem, packageName, version, filename) {
-    const pkg = this.state[ecosystem][packageName];
-    if (!pkg) return;
-    const versionEntry = pkg.versions.find((entry) => entry.version === version);
-    if (!versionEntry) return;
-    const file = versionEntry.files.find((entry) => entry.filename === filename);
-    if (!file) return;
-    file.accesses = (file.accesses ?? 0) + 1;
-    file.lastAccessedAt = new Date().toISOString();
-    this.scheduleSave();
-  }
-
-  getVersionEntryByUpstreamUrl(ecosystem, packageName, upstreamUrl) {
-    const pkg = this.state[ecosystem][packageName];
-    if (!pkg) return null;
-    for (const versionEntry of pkg.versions) {
-      const files = versionEntry.files ?? [];
-      const file = files.find((entry) => entry.upstreamUrl === upstreamUrl);
-      if (file) return { versionEntry, file };
-    }
-    return null;
-  }
-
-  getVersionEntryByTarballFileName(ecosystem, packageName, filename) {
-    const pkg = this.state[ecosystem][packageName];
-    if (!pkg) return null;
-    for (const versionEntry of pkg.versions) {
-      if (versionEntry.tarballFileName === filename) {
-        return { versionEntry, file: null };
-      }
-      const files = versionEntry.files ?? [];
-      const file = files.find((entry) => entry.filename === filename);
-      if (file) return { versionEntry, file };
-    }
-    return null;
-  }
-
-  getFileRecord(ecosystem, packageName, version, filename) {
-    const versionEntry = this.state[ecosystem][packageName]?.versions?.find(entry => entry.version === version);
-    if (!versionEntry) return null;
-    return versionEntry.files?.find(file => file.filename === filename) ?? null;
-  }
-
-  async pruneVersions(ecosystem, packageName) {
-    const pkg = this.state[ecosystem][packageName];
-    if (!pkg || !pkg.hot || pkg.versions.length <= this.keepVersions) return;
-
-    const removed = pkg.versions.slice(this.keepVersions);
-    let removedBytes = 0;
-    this.logger.info?.("prune", {
-      ecosystem,
-      packageName,
-      kept: this.keepVersions,
-      removed: removed.map((entry) => entry.version),
-    });
-    for (const entry of removed) {
-      for (const file of entry.files ?? []) {
-        if (file.cached && file.sizeBytes) {
-          removedBytes += file.sizeBytes;
-          file.cached = false;
-          file.sizeBytes = 0;
-        }
-        file.accesses ??= 0;
-        file.lastAccessedAt ??= null;
-      }
-      const dir = this.versionDir(ecosystem, packageName, entry.version);
-      await fs.rm(dir, { recursive: true, force: true });
-    }
-    pkg.cacheBytes = Math.max(0, (pkg.cacheBytes ?? 0) - removedBytes);
-    this.totalCacheBytes = Math.max(0, this.totalCacheBytes - removedBytes);
+  async readHtml(ecosystem, packageName) {
+    if (!(await exists(this.htmlPath(ecosystem, packageName)))) return null;
+    return fs.readFile(this.htmlPath(ecosystem, packageName), "utf8");
   }
 
   async saveMetadata(ecosystem, packageName, text) {
@@ -436,28 +348,6 @@ async isFresh(filePath, maxAgeMs) {
   async saveHtml(ecosystem, packageName, text) {
     await fs.mkdir(this.packageDir(ecosystem, packageName), { recursive: true });
     await fs.writeFile(this.htmlPath(ecosystem, packageName), text, "utf8");
-  }
-
-  async readMetadata(ecosystem, packageName) {
-    if (!(await exists(this.metadataPath(ecosystem, packageName)))) return null;
-    return fs.readFile(this.metadataPath(ecosystem, packageName), "utf8");
-  }
-
-  async openMetadataStream(ecosystem, packageName) {
-    const filePath = this.metadataPath(ecosystem, packageName);
-    if (!(await exists(filePath))) return null;
-    return createReadStream(filePath, { encoding: "utf8" });
-  }
-
-  async readHtml(ecosystem, packageName) {
-    if (!(await exists(this.htmlPath(ecosystem, packageName)))) return null;
-    return fs.readFile(this.htmlPath(ecosystem, packageName), "utf8");
-  }
-
-  async openHtmlStream(ecosystem, packageName) {
-    const filePath = this.htmlPath(ecosystem, packageName);
-    if (!(await exists(filePath))) return null;
-    return createReadStream(filePath, { encoding: "utf8" });
   }
 
   async saveFile(ecosystem, packageName, version, filename, bytes) {
@@ -481,6 +371,68 @@ async isFresh(filePath, maxAgeMs) {
     return createReadStream(filePath);
   }
 
+  getFileRecord(ecosystem, packageName, version, identifier) {
+    const versionEntry = this.state[ecosystem]?.[packageName]?.versions?.find((entry) => entry.version === version);
+    if (!versionEntry) return null;
+    return (
+      versionEntry.files?.find((file) => file.filename === identifier || file.upstreamUrl === identifier) ?? null
+    );
+  }
+
+  getVersionEntryByUpstreamUrl(ecosystem, packageName, upstreamUrl) {
+    const pkg = this.state[ecosystem]?.[packageName];
+    if (!pkg) return null;
+    for (const versionEntry of pkg.versions ?? []) {
+      const file = (versionEntry.files ?? []).find((entry) => entry.upstreamUrl === upstreamUrl);
+      if (file) return { versionEntry, file };
+    }
+    return null;
+  }
+
+  getVersionEntryByTarballFileName(ecosystem, packageName, filename) {
+    const pkg = this.state[ecosystem]?.[packageName];
+    if (!pkg) return null;
+    for (const versionEntry of pkg.versions ?? []) {
+      if (versionEntry.tarballFileName === filename) {
+        return { versionEntry, file: null };
+      }
+      const file = (versionEntry.files ?? []).find((entry) => entry.filename === filename);
+      if (file) return { versionEntry, file };
+    }
+    return null;
+  }
+
+  async pruneVersions(ecosystem, packageName) {
+    const pkg = this.state[ecosystem]?.[packageName];
+    if (!pkg || !pkg.hot || (pkg.versions?.length ?? 0) <= this.keepVersions) return;
+
+    const removed = pkg.versions.slice(this.keepVersions);
+    let removedBytes = 0;
+    this.logger.info?.("prune", {
+      ecosystem,
+      packageName,
+      kept: this.keepVersions,
+      removed: removed.map((entry) => entry.version),
+    });
+
+    for (const entry of removed) {
+      for (const file of entry.files ?? []) {
+        if (file.cached && file.sizeBytes) {
+          removedBytes += file.sizeBytes;
+          file.cached = false;
+          file.sizeBytes = 0;
+        }
+        file.accesses ??= 0;
+        file.lastAccessedAt ??= null;
+      }
+      const dir = this.versionDir(ecosystem, packageName, entry.version);
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+
+    pkg.cacheBytes = Math.max(0, (pkg.cacheBytes ?? 0) - removedBytes);
+    this.totalCacheBytes = Math.max(0, this.totalCacheBytes - removedBytes);
+  }
+
   async persistState() {
     await fs.mkdir(this.dataDir, { recursive: true });
     const tempPath = `${this.statePath}.tmp`;
@@ -490,7 +442,7 @@ async isFresh(filePath, maxAgeMs) {
   }
 
   async removePackage(ecosystem, packageName, reason = "cache_limit") {
-    const pkg = this.state[ecosystem][packageName];
+    const pkg = this.state[ecosystem]?.[packageName];
     if (!pkg) return false;
     const packageBytes = pkg.cacheBytes ?? 0;
     await fs.rm(this.packageDir(ecosystem, packageName), { recursive: true, force: true });
@@ -538,6 +490,7 @@ async isFresh(filePath, maxAgeMs) {
       this._saveTimer = null;
       this._savePromise = this._savePromise.then(() => this.persistState()).catch(() => {});
     }, 1000);
+    this._saveTimer.unref?.();
   }
 
   async flush() {
@@ -550,7 +503,8 @@ async isFresh(filePath, maxAgeMs) {
   }
 
   topPackages(ecosystem, limit = 20) {
-    return Object.entries(this.state[ecosystem])
+    const bucket = this.state[ecosystem] ?? {};
+    return Object.entries(bucket)
       .map(([name, info]) => ({ name, ...info }))
       .sort((a, b) => (b.requests ?? 0) - (a.requests ?? 0))
       .slice(0, limit);
