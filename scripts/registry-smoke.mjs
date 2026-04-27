@@ -162,6 +162,25 @@ async function main() {
     await waitForUrl(`${baseUrl}/`, "registry root");
     await waitForUrl(`${baseUrl}/admin/stats`, "registry stats");
 
+    const rootResponse = await fetch(`${baseUrl}/`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    const rootText = await rootResponse.text();
+    if (!rootText.includes("HTTP requests in flight") || !rootText.includes("Stable npm caching with live load")) {
+      throw new Error("root page did not expose the live load dashboard");
+    }
+
+    const statsResponse = await fetch(`${baseUrl}/admin/stats`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    const stats = await statsResponse.json();
+    if (stats.baseUrl !== baseUrl) {
+      throw new Error(`expected baseUrl ${baseUrl}, got ${stats.baseUrl}`);
+    }
+    if (!stats.http || !stats.upstream || !stats.cache) {
+      throw new Error("admin stats missing load fields");
+    }
+
     const npmDir = await mkdtemp(path.join(registryRoot, "npm-"));
     const npmConfig = {
       ...serverEnv,

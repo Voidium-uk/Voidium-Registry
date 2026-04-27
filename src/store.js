@@ -470,7 +470,15 @@ export class Store {
   topPackages(ecosystem, limit = 20) {
     const bucket = this.state[ecosystem] ?? {};
     return Object.entries(bucket)
-      .map(([name, info]) => ({ name, ...info }))
+      .map(([name, info]) => ({
+        name,
+        requests: info.requests ?? 0,
+        lastRequestedAt: info.lastRequestedAt ?? null,
+        versionCount: info.versions?.length ?? 0,
+        cacheBytes: info.cacheBytes ?? 0,
+        hot: Boolean(info.hot),
+        seenAt: info.versions?.[0]?.seenAt ?? null,
+      }))
       .sort((a, b) => (b.requests ?? 0) - (a.requests ?? 0))
       .slice(0, limit);
   }

@@ -23,7 +23,7 @@ export function createLimiter(limit) {
     next();
   };
 
-  return function run(fn) {
+  const run = function run(fn) {
     return new Promise((resolve, reject) => {
       const start = () => {
         Promise.resolve()
@@ -43,4 +43,13 @@ export function createLimiter(limit) {
       }
     });
   };
+
+  run.stats = () => ({
+    limit: max,
+    active,
+    queued: queue.length,
+    available: Math.max(0, max - active),
+  });
+
+  return run;
 }

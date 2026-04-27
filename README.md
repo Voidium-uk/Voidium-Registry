@@ -7,7 +7,8 @@ A small Node.js cache/proxy for reducing repeated npm traffic.
 - Tracks request frequency per package
 - Caches npm metadata and tarballs
 - Keeps the most recent `10` versions for hot packages on disk
-- Exposes basic stats at `/admin/stats`
+- Shows live load and cache health on `/`
+- Exposes compact stats at `/admin/stats`
 
 ## Requirements
 
@@ -53,6 +54,8 @@ npm config set registry http://localhost:4873/npm/
 - `LOG_LEVEL` default `info` (`debug`, `info`, `warn`, `error`)
 - `PREWARM` default enabled, set to `0` to skip startup prewarming
 - `REGISTRY_ROOT` override the on-disk state/cache root
+
+The root page is a lightweight status dashboard. It shows current request load, upstream queue pressure, cache fill, uptime, and a link to the JSON stats endpoint.
 
 ## Notes
 

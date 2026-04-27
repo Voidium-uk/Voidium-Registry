@@ -18,7 +18,17 @@ async function isFresh(filePath, maxAgeMs) {
 }
 
 function tarballFileNameFromUrl(tarballUrl) {
-  return path.posix.basename(new URL(tarballUrl).pathname);
+  try {
+    return path.posix.basename(new URL(tarballUrl).pathname);
+  } catch {
+    return null;
+  }
+}
+
+function rewriteTarballUrl(pkgName, baseUrl, tarballUrl) {
+  const tarballFileName = tarballFileNameFromUrl(tarballUrl);
+  if (!tarballFileName) return null;
+  return `${baseUrl}/npm/${encodeURIComponent(pkgName)}/-/${encodeURIComponent(tarballFileName)}`;
 }
 
 function npmUpstream(packageName) {
@@ -33,8 +43,9 @@ function rewriteNpmMetadata(pkgName, upstream, baseUrl) {
 
   for (const [version, info] of Object.entries(rewritten.versions)) {
     if (!info?.dist?.tarball) continue;
-    const tarballFileName = tarballFileNameFromUrl(info.dist.tarball);
-    info.dist.tarball = `${baseUrl}/npm/${encodeURIComponent(pkgName)}/-/${encodeURIComponent(tarballFileName)}`;
+    const rewrittenTarball = rewriteTarballUrl(pkgName, baseUrl, info.dist.tarball);
+    if (!rewrittenTarball) continue;
+    info.dist.tarball = rewrittenTarball;
   }
 
   rewritten.readme = rewritten.readme ?? "";
@@ -71,7 +82,9 @@ function findTarballInNpmMetadata(metadata, tarballFileName) {
   for (const [version, info] of Object.entries(metadata?.versions ?? {})) {
     const tarballUrl = info?.dist?.tarball;
     if (!tarballUrl) continue;
-    if (tarballFileNameFromUrl(tarballUrl) === tarballFileName) {
+    const upstreamTarballFileName = tarballFileNameFromUrl(tarballUrl);
+    if (!upstreamTarballFileName) continue;
+    if (upstreamTarballFileName === tarballFileName) {
       return { version, upstreamTarballUrl: tarballUrl, tarballFileName };
     }
   }
@@ -106,6 +119,10 @@ export async function ensureNpmRegistry(store, logger, BASE_URL, KEEP_VERSIONS, 
     for (const [version, info] of Object.entries(versions)) {
       if (!info?.dist?.tarball) continue;
       const tarballFileName = tarballFileNameFromUrl(info.dist.tarball);
+      if (!tarballFileName) {
+        logger.warn("invalid_tarball_url", { packageName, version });
+        continue;
+      }
       store.recordVersion("npm", packageName, version, {
         upstreamTarballUrl: info.dist.tarball,
         tarballFileName,
