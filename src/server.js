@@ -17,7 +17,7 @@ function readNumberEnv(name, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-const PORT = readNumberEnv("PORT", 4873);
+const PORT = readNumberEnv("PORT", 1234);
 const HOST = process.env.HOST ?? "0.0.0.0";
 const BASE_URL = process.env.BASE_URL ?? "https://registry.voidium.uk";
 const METADATA_TTL_MS = readNumberEnv("METADATA_TTL_MS", 7 * 24 * 60 * 60 * 1000);
