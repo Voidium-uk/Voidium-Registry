@@ -32,7 +32,7 @@ function rewriteTarballUrl(pkgName, baseUrl, tarballUrl) {
 }
 
 function npmUpstream(packageName) {
-  return `https://registry.npmjs.org/${encodeURIComponent(packageName)}`;
+  return `https://registry.npmjs.org/${packageName.replace(/\//g, "%2F")}`;
 }
 
 function rewriteNpmMetadata(pkgName, upstream, baseUrl) {

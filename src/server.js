@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Store } from "./store.js";
 import { createLimiter } from "./singleflight.js";
 import { handleNpmMetadata, handleNpmTarball, ensureNpmMetadata } from "./npm.js";
+import { handlePypiSimple, handlePypiDownload } from "./pip.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,6 +68,28 @@ function safeDecodeURIComponent(value) {
 
 function normalizePackageName(raw) {
   return safeDecodeURIComponent(raw);
+}
+
+function parsePypiPath(pathname) {
+  const simplePrefixes = ["/pypi/simple/", "/pip/simple/"];
+  for (const prefix of simplePrefixes) {
+    if (!pathname.startsWith(prefix)) continue;
+    const rest = pathname.slice(prefix.length);
+    if (!rest) return null;
+    return {
+      kind: "simple",
+      packageName: normalizePackageName(rest.replace(/\/$/, "")),
+    };
+  }
+
+  if (!pathname.startsWith("/packages/pypi/")) return null;
+  const rest = pathname.slice("/packages/pypi/".length);
+  const parts = rest.split("/");
+  if (parts.length < 2) return null;
+  const packageName = normalizePackageName(parts.shift());
+  const filename = safeDecodeURIComponent(parts.join("/"));
+  if (!packageName || !filename) return null;
+  return { kind: "download", packageName, filename };
 }
 
 function parseNpmPath(pathname) {
@@ -211,6 +234,9 @@ function createLoadSnapshot(store, runtimeState, runUpstream) {
     npm: {
       packageCount: Object.keys(store.state.npm ?? {}).length,
     },
+    pypi: {
+      packageCount: Object.keys(store.state.pypi ?? {}).length,
+    },
   };
 }
 
@@ -229,6 +255,10 @@ function createAdminStats(store, runtimeState, runUpstream) {
     npm: {
       packageCount: Object.keys(store.state.npm ?? {}).length,
       topPackages: store.topPackages("npm", 25),
+    },
+    pypi: {
+      packageCount: Object.keys(store.state.pypi ?? {}).length,
+      topPackages: store.topPackages("pypi", 25),
     },
   };
 }
@@ -724,7 +754,8 @@ const server = http.createServer(async (req, res) => {
   const startedAt = Date.now();
 
   try {
-    const pathname = new URL(req.url ?? "/", BASE_URL).pathname;
+    const urlObj = new URL(req.url ?? "/", BASE_URL);
+    const pathname = urlObj.pathname;
     const upstreamStats = typeof runUpstream.stats === "function"
       ? runUpstream.stats()
       : { limit: UPSTREAM_CONCURRENCY, active: 0, queued: 0, available: UPSTREAM_CONCURRENCY };
@@ -772,6 +803,16 @@ const server = http.createServer(async (req, res) => {
         "cache-control": "no-store",
       });
       res.end("{}\n");
+      return;
+    }
+
+    const pypiPath = parsePypiPath(pathname);
+    if (pypiPath) {
+      if (pypiPath.kind === "simple") {
+        await handlePypiSimple(req, res, pypiPath.packageName, store, logger, BASE_URL, KEEP_VERSIONS, METADATA_TTL_MS, runUpstream);
+        return;
+      }
+      await handlePypiDownload(req, res, pypiPath.packageName, pypiPath.filename, urlObj.searchParams, store, logger, BASE_URL, KEEP_VERSIONS, METADATA_TTL_MS, runUpstream);
       return;
     }
 

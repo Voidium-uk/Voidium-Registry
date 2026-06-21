@@ -14,14 +14,14 @@ find . -type d -name "node_modules" -prune -o -type f \( -name "*.js" -o -name "
       fi
       ;;
     *.py)
-      if python3 -m py_compile "$f" 2>/dev/null; then
+      if python -m py_compile "$f" 2>/dev/null; then
         printf "${GREEN}%s OK (PY)${NC}\n" "$f"
       else
         printf "${RED}%s FAIL (PY)${NC}\n" "$f"
       fi
       ;;
     *.json)
-      if python3 -m json.tool "$f" > /dev/null 2>&1; then
+      if python -m json.tool "$f" > /dev/null 2>&1; then
         printf "${GREEN}%s OK (JSON)${NC}\n" "$f"
       else
         printf "${RED}%s FAIL (JSON)${NC}\n" "$f"

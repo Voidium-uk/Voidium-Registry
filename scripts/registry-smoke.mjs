@@ -2,7 +2,7 @@
 
 import { once } from "node:events";
 import { spawn, spawnSync } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readdir, rm } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +14,7 @@ const syntaxFiles = [
   "index.js",
   "src/fetch.js",
   "src/npm.js",
+  "src/pip.js",
   "src/server.js",
   "src/singleflight.js",
   "src/store.js",
@@ -104,12 +105,21 @@ async function waitForUrl(url, label) {
   throw new Error(`timed out waiting for ${label} at ${url}${lastError ? `: ${lastError.message}` : ""}`);
 }
 
+function pythonCommand() {
+  return process.env.PYTHON ?? (process.platform === "win32" ? "python" : "python3");
+}
+
 function npmInvocation() {
   if (process.env.npm_execpath) {
     return {
       command: process.execPath,
       args: [process.env.npm_execpath],
     };
+  }
+
+  if (process.platform === "win32") {
+    const npmCli = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+    return { command: process.execPath, args: [npmCli] };
   }
 
   return {
@@ -203,6 +213,32 @@ async function main() {
     );
 
     await access(path.join(npmDir, "node_modules", "is-number", "package.json"));
+
+    const pipDir = await mkdtemp(path.join(registryRoot, "pip-"));
+    await spawnChecked(
+      pythonCommand(),
+      [
+        "-m", "pip", "download",
+        "--dest", pipDir,
+        "--index-url", `${baseUrl}/pypi/simple/`,
+        "--no-deps",
+        "six",
+      ],
+      {
+        cwd: pipDir,
+        env: {
+          ...serverEnv,
+          PIP_DISABLE_PIP_VERSION_CHECK: "1",
+          PIP_NO_CACHE_DIR: "1",
+          PIP_NO_INPUT: "1",
+        },
+      }
+    );
+
+    const pipArtifacts = await readdir(pipDir);
+    if (pipArtifacts.length === 0) {
+      throw new Error("pip smoke did not download any files");
+    }
 
     console.log(`smoke test passed against ${baseUrl}`);
   } finally {

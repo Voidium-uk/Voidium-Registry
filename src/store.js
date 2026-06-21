@@ -4,6 +4,7 @@ import path from "node:path";
 
 const DEFAULT_STATE = {
   npm: {},
+  pypi: {},
 };
 
 const DEFAULT_CACHE_LIMIT_BYTES = 90 * 1024 * 1024 * 1024;
@@ -323,6 +324,31 @@ export class Store {
   async saveMetadata(ecosystem, packageName, text) {
     await fs.mkdir(this.packageDir(ecosystem, packageName), { recursive: true });
     await fs.writeFile(this.metadataPath(ecosystem, packageName), text, "utf8");
+  }
+
+  htmlPath(ecosystem, packageName) {
+    return path.join(this.packageDir(ecosystem, packageName), "simple.html");
+  }
+
+  async readHtml(ecosystem, packageName) {
+    const filePath = this.htmlPath(ecosystem, packageName);
+    if (!(await exists(filePath))) return null;
+    return fs.readFile(filePath, "utf8");
+  }
+
+  async saveHtml(ecosystem, packageName, text) {
+    await fs.mkdir(this.packageDir(ecosystem, packageName), { recursive: true });
+    await fs.writeFile(this.htmlPath(ecosystem, packageName), text, "utf8");
+  }
+
+  getVersionEntryByUpstreamUrl(ecosystem, packageName, upstreamUrl) {
+    const pkg = this.state[ecosystem]?.[packageName];
+    if (!pkg) return null;
+    for (const versionEntry of pkg.versions ?? []) {
+      const file = (versionEntry.files ?? []).find((entry) => entry.upstreamUrl === upstreamUrl);
+      if (file) return { versionEntry, file };
+    }
+    return null;
   }
 
   async saveFile(ecosystem, packageName, version, filename, bytes) {
