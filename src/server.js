@@ -19,7 +19,7 @@ function readNumberEnv(name, fallback) {
 
 const PORT = readNumberEnv("PORT", 1234);
 const HOST = process.env.HOST ?? "0.0.0.0";
-const BASE_URL = process.env.BASE_URL ?? "http://213.31.30.140:1234";
+const BASE_URL = process.env.BASE_URL ?? "https://registry.voidium.uk";
 const METADATA_TTL_MS = readNumberEnv("METADATA_TTL_MS", 7 * 24 * 60 * 60 * 1000);
 const KEEP_VERSIONS = readNumberEnv("KEEP_VERSIONS", 10000);
 const CACHE_LIMIT_GB = readNumberEnv("CACHE_LIMIT_GB", 90);
